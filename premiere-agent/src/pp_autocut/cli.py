@@ -2,7 +2,8 @@
 
 사용 예:
     python -m pp_autocut input.mp4 -o cuts.json
-    python -m pp_autocut input.mp4 --static-threshold 1.5 --min-static-sec 0.8
+    python -m pp_autocut input.mp4 --auto-threshold
+    python -m pp_autocut input.mp4 --static-mode mark --stutter-mode cut
 """
 
 from __future__ import annotations
@@ -12,10 +13,12 @@ import json
 import os
 import sys
 
-from .analyzer import analyze_motion
+from .analyzer import analyze
 from .detector import build_result
 from .exporter import write_json
 from .models import DetectParams
+
+MODES = ("cut", "mark", "off")
 
 
 def _load_config(path: str | None) -> dict:
@@ -26,33 +29,31 @@ def _load_config(path: str | None) -> dict:
 
 
 def build_params(args, config: dict) -> DetectParams:
-    p = DetectParams(**{k: v for k, v in config.items() if k in DetectParams().to_dict()})
+    valid = DetectParams().to_dict()
+    p = DetectParams(**{k: v for k, v in config.items() if k in valid})
     if args.auto_threshold:
         p.auto_threshold = True
-    if args.static_threshold is not None:
-        p.static_threshold = args.static_threshold
-    if args.min_static_sec is not None:
-        p.min_static_sec = args.min_static_sec
-    if args.min_freeze_sec is not None:
-        p.min_freeze_sec = args.min_freeze_sec
-    if args.pad_frames is not None:
-        p.pad_frames = args.pad_frames
-    if args.downscale_width is not None:
-        p.downscale_width = args.downscale_width
+    for attr in (
+        "static_threshold", "min_static_sec", "min_freeze_sec", "pad_frames",
+        "downscale_width", "static_mode", "stutter_mode", "offcenter_mode",
+        "min_offcenter_sec", "center_dist_thresh",
+    ):
+        val = getattr(args, attr, None)
+        if val is not None:
+            setattr(p, attr, val)
     return p
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="pp_autocut",
-        description="영상에서 정지/버벅 구간을 검출해 프리미어 컷 계획(JSON)을 만든다.",
+        description="영상에서 정지/버벅/오프센터 구간을 검출해 프리미어 컷·마커 계획(JSON)을 만든다.",
     )
     parser.add_argument("input", help="입력 영상 파일 경로")
     parser.add_argument("-o", "--out", default=None, help="결과 JSON 경로 (기본: <입력>.cuts.json)")
     parser.add_argument("-c", "--config", default=None, help="파라미터 JSON 설정 파일")
     parser.add_argument(
-        "--auto-threshold",
-        action="store_true",
+        "--auto-threshold", action="store_true",
         help="영상의 모션 분포로 정지 임계값을 자동 산출 (피사체 크기에 강건)",
     )
     parser.add_argument("--static-threshold", type=float, default=None)
@@ -60,6 +61,12 @@ def main(argv=None) -> int:
     parser.add_argument("--min-freeze-sec", type=float, default=None)
     parser.add_argument("--pad-frames", type=int, default=None)
     parser.add_argument("--downscale-width", type=int, default=None)
+    # 유형별 처리 방식: cut(잘라냄) / mark(표시만) / off(무시)
+    parser.add_argument("--static-mode", choices=MODES, default=None, help="정지 구간 처리 (기본 mark)")
+    parser.add_argument("--stutter-mode", choices=MODES, default=None, help="버벅임 처리 (기본 cut)")
+    parser.add_argument("--offcenter-mode", choices=MODES, default=None, help="오프센터 처리 (기본 mark)")
+    parser.add_argument("--min-offcenter-sec", type=float, default=None)
+    parser.add_argument("--center-dist-thresh", type=float, default=None)
     parser.add_argument("-q", "--quiet", action="store_true", help="요약 출력 생략")
     args = parser.parse_args(argv)
 
@@ -69,19 +76,20 @@ def main(argv=None) -> int:
     params = build_params(args, _load_config(args.config))
     out_path = args.out or (os.path.splitext(args.input)[0] + ".cuts.json")
 
-    motion, fps, frame_count, width, height = analyze_motion(
-        args.input, downscale_width=params.downscale_width
+    track = analyze(
+        args.input, downscale_width=params.downscale_width, safe_zone=params.safe_zone
     )
-    result = build_result(args.input, motion, fps, frame_count, width, height, params)
+    result = build_result(args.input, track, params)
     data = write_json(result, out_path)
 
     if not args.quiet:
         s = data["summary"]
         print(f"[pp_autocut] {args.input}")
-        print(f"  해상도 {width}x{height} | {fps:.2f}fps | {frame_count}프레임 "
-              f"({data['duration_sec']:.1f}s)")
-        print(f"  제거 구간 {s['remove_count']}개 | {s['removed_frames']}프레임 "
-              f"({s['removed_sec']:.1f}s) 컷")
+        print(f"  해상도 {track.width}x{track.height} | {track.fps:.2f}fps | "
+              f"{track.frame_count}프레임 ({data['duration_sec']:.1f}s)")
+        print(f"  ✂️  컷 {s['remove_count']}개 | {s['removed_frames']}프레임 ({s['removed_sec']:.1f}s)")
+        reasons = ", ".join(f"{k} {v}" for k, v in s["mark_by_reason"].items()) or "-"
+        print(f"  🔖 표시 {s['mark_count']}개 ({reasons})")
         print(f"  -> {out_path}")
     return 0
 

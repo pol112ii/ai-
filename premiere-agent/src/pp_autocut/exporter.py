@@ -1,9 +1,11 @@
 """분석 결과를 프리미어 CEP/ExtendScript 패널이 읽을 JSON으로 내보낸다.
 
-스키마: pp-autocut/v1
-패널은 다음을 수행하면 된다.
-  1) cut_points 의 각 프레임 위치에서 시퀀스를 면도날(razor)로 자른다.
-  2) remove_ranges 의 각 구간을 리플 삭제(ripple delete)한다.
+스키마: pp-autocut/v2
+패널이 할 일
+  1) cut_points 의 프레임 위치에서 시퀀스를 면도날(razor)로 자른다.
+  2) remove_ranges 구간을 (뒤에서 앞 순서로) 리플 삭제한다.
+  3) markers 의 각 구간/지점에 프리미어 마커를 찍어 사람이 검수하게 한다.
+     (자르지 않고 '표시'만 하는 항목 — 정지/오프센터 등)
 프레임 번호가 1차 기준이며, 초/타임코드는 참고용이다.
 """
 
@@ -12,30 +14,47 @@ from __future__ import annotations
 import json
 from typing import List
 
-from .models import AnalysisResult
+from .models import AnalysisResult, Segment
 from .timecode import frames_to_seconds, frames_to_timecode
+
+# 검출 사유별 마커 색상(프리미어 마커 색 이름)과 한글 라벨.
+REASON_META = {
+    "static": ("Yellow", "정지(움직임 없음)"),
+    "offcenter": ("Red", "손이 중앙 이탈/가장자리 잘림"),
+    "stutter": ("Cyan", "버벅임(프리즈/중복 프레임)"),
+}
+
+
+def _seg_dict(seg: Segment, fps: float) -> dict:
+    d = {
+        "type": seg.type,
+        "reason": seg.reason,
+        "start_frame": seg.start_frame,
+        "end_frame": seg.end_frame,
+        "start_sec": round(frames_to_seconds(seg.start_frame, fps), 3),
+        "end_sec": round(frames_to_seconds(seg.end_frame, fps), 3),
+        "start_tc": frames_to_timecode(seg.start_frame, fps),
+        "end_tc": frames_to_timecode(seg.end_frame, fps),
+    }
+    return d
+
+
+def _marker_dict(seg: Segment, fps: float) -> dict:
+    color, label = REASON_META.get(seg.reason, ("Green", seg.reason))
+    dur = round(seg.length_sec(fps), 2)
+    d = _seg_dict(seg, fps)
+    d.update({
+        "color": color,
+        "name": label,
+        "comment": f"{label} · {dur}s",
+    })
+    return d
 
 
 def to_dict(result: AnalysisResult) -> dict:
     fps = result.fps
-
-    def seg_dict(seg) -> dict:
-        d = {
-            "type": seg.type,
-            "start_frame": seg.start_frame,
-            "end_frame": seg.end_frame,
-            "start_sec": round(frames_to_seconds(seg.start_frame, fps), 3),
-            "end_sec": round(frames_to_seconds(seg.end_frame, fps), 3),
-            "start_tc": frames_to_timecode(seg.start_frame, fps),
-            "end_tc": frames_to_timecode(seg.end_frame, fps),
-        }
-        if seg.reason:
-            d["reason"] = seg.reason
-        return d
-
     removes = result.remove_segments
 
-    # 컷 지점: 각 remove 구간의 시작/끝 경계(중복 제거, 0과 끝은 제외).
     cut_set = set()
     for r in removes:
         cut_set.add(r.start_frame)
@@ -44,8 +63,13 @@ def to_dict(result: AnalysisResult) -> dict:
     cut_set.discard(result.frame_count)
     cut_points: List[int] = sorted(cut_set)
 
+    # 마커 사유별 개수
+    mark_by_reason: dict = {}
+    for m in result.marks:
+        mark_by_reason[m.reason] = mark_by_reason.get(m.reason, 0) + 1
+
     return {
-        "schema": "pp-autocut/v1",
+        "schema": "pp-autocut/v2",
         "source": result.source,
         "fps": round(fps, 4),
         "frame_count": result.frame_count,
@@ -56,10 +80,13 @@ def to_dict(result: AnalysisResult) -> dict:
             "remove_count": len(removes),
             "removed_frames": result.removed_frames,
             "removed_sec": round(frames_to_seconds(result.removed_frames, fps), 3),
+            "mark_count": len(result.marks),
+            "mark_by_reason": mark_by_reason,
         },
         "cut_points": cut_points,
-        "remove_ranges": [seg_dict(r) for r in removes],
-        "segments": [seg_dict(s) for s in result.segments],
+        "remove_ranges": [_seg_dict(r, fps) for r in removes],
+        "markers": [_marker_dict(m, fps) for m in result.marks],
+        "segments": [_seg_dict(s, fps) for s in result.segments],
     }
 
 

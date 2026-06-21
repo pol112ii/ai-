@@ -3,5 +3,20 @@
   "min_static_sec": 1.0,
   "min_freeze_sec": 0.15,
   "pad_frames": 2,
-  "downscale_width": 320
+  "downscale_width": 320,
+
+  "static_mode": "mark",
+  "stutter_mode": "cut",
+  "offcenter_mode": "mark",
+
+  "safe_zone": 0.6,
+  "center_dist_thresh": 0.28,
+  "border_ratio_thresh": 0.72,
+  "require_border_clip": true,
+  "min_offcenter_sec": 0.4,
+
+  "auto_threshold": false,
+  "auto_percentile": 75.0,
+  "auto_ratio": 0.3,
+  "auto_floor": 0.2
 }
