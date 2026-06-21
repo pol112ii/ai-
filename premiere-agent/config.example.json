@@ -1,0 +1,7 @@
+{
+  "static_threshold": 1.2,
+  "min_static_sec": 1.0,
+  "min_freeze_sec": 0.15,
+  "pad_frames": 2,
+  "downscale_width": 320
+}

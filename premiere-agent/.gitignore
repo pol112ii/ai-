@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+*.cuts.json
+.venv/
+venv/
+.DS_Store
