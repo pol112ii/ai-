@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>PP AutoCut</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="wrap">
+    <h1>PP AutoCut <span class="ver">0.1</span></h1>
+    <p class="hint">타임라인에 영상을 올린 뒤, 아래 버튼을 누르면 정지·버벅 구간은 컷,
+      구도 점검 구간은 마커로 자동 적용됩니다.</p>
+
+    <div class="card">
+      <button id="detect" class="ghost">① 현재 시퀀스 감지</button>
+      <div id="ctx" class="ctx">시퀀스 정보를 감지하세요.</div>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <label>정지 컷 기준(초)</label>
+        <input id="staticCut" type="number" step="0.5" value="3.0">
+      </div>
+      <div class="row">
+        <label>구도 민감도</label>
+        <input id="centerThresh" type="number" step="0.05" value="0.30">
+      </div>
+      <div class="row check">
+        <label><input id="doCuts" type="checkbox" checked> 실제 컷 적용</label>
+        <label><input id="doMarkers" type="checkbox" checked> 마커(검수) 적용</label>
+      </div>
+      <div class="row check">
+        <label><input id="doOffcenter" type="checkbox" checked> 구도(중앙 빠짐) 검출</label>
+      </div>
+      <div class="row">
+        <label>python 명령</label>
+        <input id="pyCmd" type="text" value="python">
+      </div>
+    </div>
+
+    <button id="run" class="primary">② 분석하고 적용</button>
+
+    <p class="warn">⚠ 컷은 되돌리기 어려울 수 있어요. 처음엔 <b>시퀀스를 복제(Ctrl+C 후
+      새 시퀀스, 또는 우클릭 → Duplicate)</b>한 사본에서 테스트하세요.</p>
+
+    <div class="log" id="log"></div>
+  </div>
+
+  <script src="js/CSInterface.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

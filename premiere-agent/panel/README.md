@@ -1,49 +1,62 @@
-# 프리미어 패널 (다음 단계)
+# PP AutoCut 프리미어 패널
 
-분석부가 만든 `cuts.json`(스키마 `pp-autocut/v1`)을 읽어 현재 시퀀스를 자동 컷하는
-프리미어프로 확장 패널 자리다. 아직 구현 전이며, 설계 메모만 둔다.
+`cuts.json`(스키마 `pp-autocut/v2`)을 만들고 활성 시퀀스에 **컷 + 마커를 자동 적용**하는
+프리미어프로 CEP 확장 패널입니다.
 
-## 선택한 방식: CEP + ExtendScript
+## 동작 흐름
 
-- **CEP 패널(HTML/JS)**: 버튼·진행 상태 등 UI. `cuts.json`을 불러오고, 필요하면
-  분석부(Python)를 백그라운드로 실행하도록 호출한다.
-- **ExtendScript(.jsx)**: 실제 타임라인 조작. CEP에서 `evalScript`로 호출한다.
+```
+[타임라인에 영상] → 패널 "분석하고 적용" 클릭
+   → (1) ExtendScript 로 활성 시퀀스의 소스 영상 경로/오프셋 확보
+   → (2) Node 로 파이썬 분석기 실행: python -m pp_autocut <소스> --auto-threshold -o <tmp.json>
+   → (3) ExtendScript(ppac_applyPlan)로 시퀀스에 컷(QE razor+ripple) + 마커 적용
+```
 
-## 패널이 할 일 (cuts.json 소비 절차)
-
-`cuts.json`(스키마 `pp-autocut/v2`)에는 **자를 것**과 **표시만 할 것**이 분리돼 있다.
-
-1. `cuts.json`을 읽는다. `fps`, `cut_points`, `remove_ranges`, `markers` 사용.
-2. 활성 시퀀스를 가져온다. (QE DOM: `qe.project.getActiveSequence()`)
-3. **표시(markers)** 를 먼저 찍는다. 컷으로 프레임 번호가 밀리기 전에 처리하는 편이 안전.
-   - 각 마커: `markers[].start_frame/end_frame`, `color`, `name`, `comment`.
-   - ExtendScript: `seq.markers.createMarker(start_sec)` → `m.end = end_sec`,
-     `m.name = name`, `m.comments = comment`, `m.setColorByIndex(색인)`.
-   - 색 이름(`Yellow`/`Red`/`Cyan` …)은 패널에서 색인 번호로 매핑한다.
-4. **컷(remove_ranges)** 을 적용한다.
-   - `cut_points`의 각 프레임에서 면도날 컷(`razor`). 프레임→초 = `frame / fps`.
-   - `remove_ranges`를 **뒤에서 앞 순서로** 리플 삭제한다.
-     (앞에서부터 지우면 뒤 구간 프레임 번호가 밀려 어긋난다.)
-5. 완료 후 컷 개수·표시 개수를 UI에 표시한다.
-
-> 표시(static/offcenter)는 영상을 자르지 않고 사람이 검수할 위치만 알려준다.
-> 자동으로 자르는 것은 버벅임(stutter)뿐이며, 이는 분석부 설정으로 바꿀 수 있다.
-
-> QE DOM API(`qe.*`)는 비공개 인터페이스라 버전에 따라 동작이 다를 수 있다.
-> 안정성이 필요하면 공식 `Sequence`/`TrackItem` API와 시퀀스 인/아웃 + 리프트/추출
-> 조합으로 대체하는 방안을 검토한다.
-
-## 프레임 기준 주의
-
-`cuts.json`은 프레임 번호를 1차 기준으로 삼는다. 패널에서 시간으로 환산할 때는
-반드시 `cuts.json`의 `fps`를 쓰고, 시퀀스 fps와 소스 fps가 다르면 환산을 보정한다.
-
-## 폴더 구조(예정)
+## 구성
 
 ```
 panel/
-├─ CSXS/manifest.xml     # CEP 확장 매니페스트
-├─ index.html            # 패널 UI
-├─ js/main.js            # UI 로직, cuts.json 로드, evalScript 호출
-└─ jsx/autocut.jsx       # 타임라인 컷(razor + ripple delete) + 마커 찍기
+├─ CSXS/manifest.xml   # CEP 확장 매니페스트 (Node 활성화)
+├─ .debug              # 미서명 디버깅용
+├─ index.html          # 패널 UI
+├─ css/style.css
+├─ js/CSInterface.js   # 최소 CEP 인터페이스
+├─ js/main.js          # UI 로직: 감지→파이썬 실행→적용
+├─ jsx/autocut.jsx     # 타임라인 컷(razor+ripple) + 마커 찍기
+└─ install.ps1         # Windows 설치 스크립트
 ```
+
+## 설치 (Windows)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+이 스크립트가 ① 미서명 확장 허용(`PlayerDebugMode=1`) ② 패널을
+`%APPDATA%\Adobe\CEP\extensions\com.joybear.ppautocut` 로 복사
+③ `pip install -e`(분석기) 를 한다. 끝나면 프리미어 재시작 후
+**창 > 확장 > PP AutoCut** 에서 연다.
+
+## 사용
+
+1. 시퀀스를 만들고 영상을 타임라인(V1)에 올린다.
+2. 패널에서 **① 현재 시퀀스 감지** → 소스 영상/ fps 확인.
+3. 옵션(정지 컷 기준, 구도 민감도, 컷/마커 적용 여부) 설정.
+4. **② 분석하고 적용** → 컷·마커가 자동으로 들어간다.
+
+## 시간 매핑
+
+분석기는 '소스 영상' 기준 초를 준다. 클립이 트림/이동됐을 수 있으므로
+`시퀀스초 = clip.start + (소스초 - clip.inPoint)` 로 변환하고, 클립 가시범위
+밖은 건너뛴다. 컷을 먼저 적용한 뒤 마커는 잘려나간 길이만큼 보정해 배치한다.
+
+## 주의 / 한계
+
+- **컷은 QE(비공개 API)의 razor + ripple 삭제**를 쓴다. 프리미어 버전에 따라
+  동작이 다를 수 있어 각 단계를 try/catch 로 감쌌다. **처음에는 시퀀스 사본에서
+  테스트**할 것. 마커는 공식 API라 안정적이다.
+- 컷이 적용 안 되면 패널의 **'실제 컷 적용'을 끄고 마커만** 받은 뒤, 마커 위치를
+  보며 수동으로 잘라도 된다(검수 워크플로).
+- 마커 색 인덱스(`setColorByIndex`)는 버전별 매핑이 다를 수 있다.
+- 단일 클립(보통 V1) 기준으로 매핑한다. 여러 클립을 이어붙인 복잡한 시퀀스는
+  먼저 한 클립으로 합치거나(중간 렌더) 클립을 선택해 대상으로 지정한다.
