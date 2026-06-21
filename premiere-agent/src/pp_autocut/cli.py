@@ -35,9 +35,9 @@ def build_params(args, config: dict) -> DetectParams:
     if args.auto_threshold:
         p.auto_threshold = True
     for attr in (
-        "static_threshold", "min_static_sec", "min_freeze_sec", "pad_frames",
-        "downscale_width", "static_mode", "stutter_mode", "offcenter_mode",
-        "min_offcenter_sec", "center_dist_thresh",
+        "static_threshold", "static_mark_sec", "static_cut_sec", "min_freeze_sec",
+        "pad_frames", "downscale_width", "stutter_mode", "offcenter_mode",
+        "min_offcenter_sec", "center_content_thresh", "safe_zone",
     ):
         val = getattr(args, attr, None)
         if val is not None:
@@ -58,16 +58,18 @@ def main(argv=None) -> int:
         help="영상의 모션 분포로 정지 임계값을 자동 산출 (피사체 크기에 강건)",
     )
     parser.add_argument("--static-threshold", type=float, default=None)
-    parser.add_argument("--min-static-sec", type=float, default=None)
+    parser.add_argument("--static-mark-sec", type=float, default=None, help="정지 이 길이↑ 표시 (기본 1.5s)")
+    parser.add_argument("--static-cut-sec", type=float, default=None, help="정지 이 길이↑ 컷 (기본 3.0s)")
     parser.add_argument("--min-freeze-sec", type=float, default=None)
     parser.add_argument("--pad-frames", type=int, default=None)
     parser.add_argument("--downscale-width", type=int, default=None)
     # 유형별 처리 방식: cut(잘라냄) / mark(표시만) / off(무시)
-    parser.add_argument("--static-mode", choices=MODES, default=None, help="정지 구간 처리 (기본 mark)")
     parser.add_argument("--stutter-mode", choices=MODES, default=None, help="버벅임 처리 (기본 cut)")
-    parser.add_argument("--offcenter-mode", choices=MODES, default=None, help="오프센터 처리 (기본 mark)")
+    parser.add_argument("--offcenter-mode", choices=MODES, default=None, help="오프센터(구도) 처리 (기본 mark)")
     parser.add_argument("--min-offcenter-sec", type=float, default=None)
-    parser.add_argument("--center-dist-thresh", type=float, default=None)
+    parser.add_argument("--center-content-thresh", type=float, default=None,
+                        help="중앙 엣지비율 이 값↓이면 '중앙 비었음' (기본 0.30)")
+    parser.add_argument("--safe-zone", type=float, default=None, help="중앙 안전영역 비율 (기본 0.6)")
     # 진단/튜닝 도구
     parser.add_argument("--preview", metavar="OUT.mp4", default=None,
                         help="검출 결과를 오버레이한 미리보기 영상 생성")

@@ -20,7 +20,7 @@ from .timecode import frames_to_seconds, frames_to_timecode
 # 검출 사유별 마커 색상(프리미어 마커 색 이름)과 한글 라벨.
 REASON_META = {
     "static": ("Yellow", "정지(움직임 없음)"),
-    "offcenter": ("Red", "손이 중앙 이탈/가장자리 잘림"),
+    "offcenter": ("Red", "중앙 피사체 빠짐(구도 점검)"),
     "stutter": ("Cyan", "버벅임(프리즈/중복 프레임)"),
 }
 

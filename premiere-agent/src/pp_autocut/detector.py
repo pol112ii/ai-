@@ -8,12 +8,14 @@
   1) 모션 점수가 static_threshold 미만인 프레임을 '저모션'으로 본다.
   2) 연속 저모션을 묶어 run 으로 만든다.
   3) run 길이로 분류:
-       min_static_sec 이상 -> "static"  (정지 장면)
-       min_freeze_sec 이상  -> "stutter" (잠깐 얼어붙는 버벅임)
-       그보다 짧으면         -> 무시
-오프센터 (공간 정보 기반)
-  - '움직이는데' 모션 무게중심이 중앙에서 멀고(가장자리), 안전영역 밖에 모션이
-    집중되면 '손이 화면에서 벗어나 잘리는' 구간으로 본다 -> "offcenter".
+       static_cut_sec 이상  -> "static" 컷  (확실한 데드 구간)
+       static_mark_sec 이상 -> "static" 표시 (사람이 검수)
+       min_freeze_sec 이상   -> "stutter" (잠깐 얼어붙는 버벅임)
+       그보다 짧으면          -> 무시
+오프센터 (구도/내용 기반)
+  - 손 위치가 아니라 '중앙에 작업물·도구가 잘 보이나'를 본다.
+  - '작업 중인데(움직임 있음)' 중앙 안전영역의 엣지 비율(center_ratio)이
+    center_content_thresh 미만이면 '중앙 피사체 빠짐'으로 본다 -> "offcenter".
 
 각 유형은 mode 에 따라 처리된다.
   cut  -> 실제로 잘라냄(remove)
@@ -75,26 +77,31 @@ def _mode_type(mode: str) -> str | None:
 def detect_motion_segments(
     motion: Sequence[float], fps: float, params: DetectParams
 ) -> List[Segment]:
-    """정지/버벅 구간을 검출해 remove 또는 mark 세그먼트로 반환(분류 전)."""
+    """정지/버벅 구간을 검출해 remove 또는 mark 세그먼트로 반환(분류 전).
+
+    정지는 길이에 따라: static_cut_sec 이상 컷, static_mark_sec 이상 표시.
+    """
     if not motion:
         return []
     if params.auto_threshold:
         params.static_threshold = compute_auto_threshold(motion, params)
 
-    min_static = max(1, int(round(params.min_static_sec * fps)))
+    static_cut = max(1, int(round(params.static_cut_sec * fps)))
+    static_mark = max(1, int(round(params.static_mark_sec * fps)))
     min_freeze = max(1, int(round(params.min_freeze_sec * fps)))
     pad = max(0, int(params.pad_frames))
 
     out: List[Segment] = []
     for start, end in _find_low_runs(motion, params.static_threshold):
         length = end - start
-        if length >= min_static:
-            reason, mode = "static", params.static_mode
+        if length >= static_cut:
+            reason, seg_type = "static", "remove"
+        elif length >= static_mark:
+            reason, seg_type = "static", "mark"
         elif length >= min_freeze:
-            reason, mode = "stutter", params.stutter_mode
+            reason, seg_type = "stutter", _mode_type(params.stutter_mode)
         else:
             continue
-        seg_type = _mode_type(mode)
         if seg_type is None:
             continue
         padded = _apply_pad(start, end, pad)
@@ -105,7 +112,10 @@ def detect_motion_segments(
 
 
 def detect_offcenter(track: MotionTrack, params: DetectParams) -> List[Segment]:
-    """손이 중앙에서 벗어나 가장자리에서 잘리는 구간을 검출(항상 표시/컷 대상)."""
+    """중앙에 작업물·도구가 잘 안 보이는(중앙 피사체 빠짐) 구간을 검출.
+
+    손 위치가 아니라 중앙 안전영역의 엣지 비율(center_ratio)로 판단한다.
+    """
     if params.offcenter_mode == "off":
         return []
     seg_type = _mode_type(params.offcenter_mode)
@@ -114,12 +124,9 @@ def detect_offcenter(track: MotionTrack, params: DetectParams) -> List[Segment]:
 
     flags: List[bool] = []
     for i in range(track.frame_count):
-        active = track.motion[i] >= params.static_threshold  # 움직이는 중인가
-        dist = max(abs(track.cx[i] - 0.5), abs(track.cy[i] - 0.5))  # 중앙에서의 거리(0~0.5)
-        off = active and dist >= params.center_dist_thresh
-        if off and params.require_border_clip:
-            off = track.border_ratio[i] >= params.border_ratio_thresh
-        flags.append(off)
+        active = (not params.offcenter_requires_motion) or track.motion[i] >= params.static_threshold
+        center_empty = track.center_ratio[i] < params.center_content_thresh
+        flags.append(active and center_empty)
 
     min_off = max(1, int(round(params.min_offcenter_sec * track.fps)))
     pad = max(0, int(params.pad_frames))

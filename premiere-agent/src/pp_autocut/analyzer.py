@@ -1,14 +1,15 @@
-"""영상에서 프레임별 모션 특징을 계산한다.
+"""영상에서 프레임별 모션 + '내용(구도)' 특징을 계산한다.
 
-각 프레임마다 직전 프레임과의 절대 차분(diff)을 구해 다음을 뽑는다.
-- motion       : diff 평균(0~100). 작을수록 '움직임 없음'.
-- cx, cy        : 모션 무게중심 위치(0~1, 0.5=중앙). 손이 어디서 움직이는지.
-- border_ratio  : 중앙 안전영역 '밖'에 모인 모션 비율(0~1). 가장자리 잘림 신호.
+프레임마다 두 갈래를 뽑는다.
+- 모션(정지/버벅용): 직전 프레임과의 절대 차분 평균(0~100). 작을수록 멈춤.
+- 내용/구도(오프센터용): 현재 프레임의 엣지(Sobel) 에너지로
+    cx, cy        : 엣지 무게중심(0~1, 0.5=중앙) = '작업물·도구가 어디 있나'
+    center_ratio  : 중앙 안전영역 안의 엣지 비율(0~1) = '중앙에 내용이 얼마나 있나'
 
-cx/cy/border_ratio 는 '손이 중앙에서 벗어나 가장자리에서 잘리는' 오프센터 구간을
-표시하기 위한 공간 정보다.
+핵심: 손은 사이드에 있는 게 정상이므로 '모션 위치'가 아니라 '화면 내용이 중앙에
+모여 있는가'로 구도를 판단한다.
 
-OpenCV(cv2)가 필요하다. 없으면 명확한 안내와 함께 예외를 던진다.
+OpenCV(cv2)가 필요하다.
 """
 
 from __future__ import annotations
@@ -33,28 +34,35 @@ def _resize_gray(frame: np.ndarray, target_width: int) -> np.ndarray:
     return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
 
-def _spatial_features(diff: np.ndarray, safe_zone: float):
-    """diff 맵에서 (cx, cy, border_ratio) 계산. 무게중심과 가장자리 집중도."""
-    h, w = diff.shape[:2]
-    total = float(diff.sum())
+def _content_features(gray: np.ndarray, safe_zone: float):
+    """엣지 맵에서 (cx, cy, center_ratio) 계산.
+
+    cx, cy        : 엣지 무게중심(0~1).
+    center_ratio  : 중앙 안전영역 안의 엣지 에너지 / 전체 엣지 에너지.
+    """
+    gx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+    gy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
+    mag = cv2.magnitude(gx, gy)
+
+    h, w = mag.shape[:2]
+    total = float(mag.sum())
     if total <= 0:
         return 0.5, 0.5, 0.0
 
-    m = cv2.moments(diff, binaryImage=False)
+    m = cv2.moments(mag, binaryImage=False)
     cx = (m["m10"] / m["m00"]) / w if m["m00"] else 0.5
     cy = (m["m01"] / m["m00"]) / h if m["m00"] else 0.5
 
-    # 중앙 안전영역(가운데 safe_zone 비율) 안쪽 에너지 비율
     margin = (1.0 - safe_zone) / 2.0
     x0, x1 = int(w * margin), int(w * (1.0 - margin))
     y0, y1 = int(h * margin), int(h * (1.0 - margin))
-    inside = float(diff[y0:y1, x0:x1].sum())
-    border_ratio = 1.0 - (inside / total)
-    return cx, cy, border_ratio
+    inside = float(mag[y0:y1, x0:x1].sum())
+    center_ratio = inside / total
+    return cx, cy, center_ratio
 
 
 def analyze(path: str, downscale_width: int = 320, safe_zone: float = 0.6) -> MotionTrack:
-    """영상을 스트리밍하며 프레임별 모션 특징(MotionTrack)을 만든다."""
+    """영상을 스트리밍하며 프레임별 특징(MotionTrack)을 만든다."""
     cap = cv2.VideoCapture(path)
     if not cap.isOpened():
         raise FileNotFoundError(f"영상을 열 수 없습니다: {path}")
@@ -71,19 +79,20 @@ def analyze(path: str, downscale_width: int = 320, safe_zone: float = 0.6) -> Mo
             if not ok:
                 break
             gray = _resize_gray(frame, downscale_width)
+
+            # 모션(정지/버벅)
             if prev is None:
                 track.motion.append(0.0)
-                track.cx.append(0.5)
-                track.cy.append(0.5)
-                track.border_ratio.append(0.0)
             else:
                 diff = cv2.absdiff(gray, prev)
                 track.motion.append(float(diff.mean()) * 100.0 / 255.0)
-                cx, cy, br = _spatial_features(diff, safe_zone)
-                track.cx.append(cx)
-                track.cy.append(cy)
-                track.border_ratio.append(br)
             prev = gray
+
+            # 내용/구도(오프센터)
+            cx, cy, cr = _content_features(gray, safe_zone)
+            track.cx.append(cx)
+            track.cy.append(cy)
+            track.center_ratio.append(cr)
     finally:
         cap.release()
 

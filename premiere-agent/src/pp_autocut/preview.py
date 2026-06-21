@@ -6,7 +6,7 @@
   3) calibrate : 모션 분포에서 임계값 추천값 산출
 
 오버레이 글자는 OpenCV 기본 폰트가 한글을 못 그리므로 영문 라벨을 쓴다.
-  STATIC=정지, OFF-CENTER=손이 가장자리로 벗어남, STUTTER=버벅임
+  STATIC=정지, OFF-CENTER=중앙 피사체 빠짐(구도), STUTTER=버벅임
 """
 
 from __future__ import annotations
@@ -71,7 +71,7 @@ def render_preview(
             # 안전영역 박스(초록)
             cv2.rectangle(frame, (sx0, sy0), (sx1, sy1), (0, 200, 0), 1)
 
-            # 모션 무게중심 점
+            # 내용(엣지) 무게중심 점 = 작업물·도구 위치
             cx = int(track.cx[i] * W)
             cy = int(track.cy[i] * H)
             cv2.circle(frame, (cx, cy), 7, (255, 255, 255), -1)
@@ -80,7 +80,7 @@ def render_preview(
             # 상단 정보 바
             cv2.rectangle(frame, (0, 0), (W, 26), (0, 0, 0), -1)
             info = (f"f{i}  motion {track.motion[i]:4.1f}  "
-                    f"border {track.border_ratio[i]:.2f}")
+                    f"center {track.center_ratio[i]:.2f}")
             cv2.putText(frame, info, (6, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
                         (255, 255, 255), 1, cv2.LINE_AA)
 
@@ -106,13 +106,13 @@ def write_metrics_csv(track: MotionTrack, result: AnalysisResult, out_path: str)
     labels = _label_per_frame(result)
     with open(out_path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["frame", "sec", "motion", "cx", "cy", "border_ratio", "kind", "reason"])
+        w.writerow(["frame", "sec", "motion", "cx", "cy", "center_ratio", "kind", "reason"])
         for i in range(track.frame_count):
             lab = labels[i] or ("", "")
             w.writerow([
                 i, round(i / track.fps, 3), round(track.motion[i], 3),
                 round(track.cx[i], 3), round(track.cy[i], 3),
-                round(track.border_ratio[i], 3), lab[0], lab[1],
+                round(track.center_ratio[i], 3), lab[0], lab[1],
             ])
     return out_path
 
@@ -137,14 +137,13 @@ def calibrate(track: MotionTrack, params: DetectParams) -> Dict:
     )
     below = sum(1 for m in track.motion if m < suggested_static)
 
-    # 움직이는 프레임들의 무게중심 거리/가장자리 비율 분포
-    active = [
-        (max(abs(track.cx[i] - 0.5), abs(track.cy[i] - 0.5)), track.border_ratio[i])
+    # 중앙 안전영역 엣지 비율 분포 (작업 중인 프레임 기준)
+    center = sorted(
+        track.center_ratio[i]
         for i in range(track.frame_count)
         if track.motion[i] >= suggested_static
-    ]
-    dist_sorted = sorted(d for d, _ in active)
-    border_sorted = sorted(b for _, b in active)
+    )
+    active_n = len(center)
 
     return {
         "frames": track.frame_count,
@@ -153,24 +152,23 @@ def calibrate(track: MotionTrack, params: DetectParams) -> Dict:
         "suggested_static_threshold": suggested_static,
         "frames_below_suggested": below,
         "ratio_below_suggested": round(below / max(1, track.frame_count), 3),
-        "active_frames": len(active),
-        "center_dist_p75": round(_percentile(dist_sorted, 75), 3),
-        "center_dist_p90": round(_percentile(dist_sorted, 90), 3),
-        "border_ratio_p75": round(_percentile(border_sorted, 75), 3),
-        "border_ratio_p90": round(_percentile(border_sorted, 90), 3),
+        "active_frames": active_n,
+        "center_ratio_p10": round(_percentile(center, 10), 3),
+        "center_ratio_p25": round(_percentile(center, 25), 3),
+        "center_ratio_p50": round(_percentile(center, 50), 3),
     }
 
 
 def print_calibration(report: Dict) -> None:
-    print("[calibrate] 모션 분포 기반 추천")
+    print("[calibrate] 분포 기반 추천")
     print(f"  프레임 {report['frames']} @ {report['fps']}fps")
     mp = report["motion_percentiles"]
     print(f"  모션 분위수: p50 {mp['p50']} | p75 {mp['p75']} | p90 {mp['p90']} | "
           f"p95 {mp['p95']} | p99 {mp['p99']}")
     print(f"  추천 static_threshold = {report['suggested_static_threshold']} "
           f"(이 값 미만 프레임 {report['ratio_below_suggested']*100:.0f}%)")
-    print(f"  움직이는 프레임 {report['active_frames']}개의 무게중심거리: "
-          f"p75 {report['center_dist_p75']} / p90 {report['center_dist_p90']} "
-          f"(현재 center_dist_thresh 와 비교)")
-    print(f"  가장자리비율: p75 {report['border_ratio_p75']} / p90 {report['border_ratio_p90']} "
-          f"(현재 border_ratio_thresh 와 비교)")
+    print(f"  작업 중 프레임 {report['active_frames']}개의 중앙 엣지비율: "
+          f"p10 {report['center_ratio_p10']} / p25 {report['center_ratio_p25']} / "
+          f"p50 {report['center_ratio_p50']}")
+    print(f"  -> center_content_thresh 는 보통 위 p10~p25 부근에서 잡는다 "
+          f"(낮을수록 덜 민감).")
