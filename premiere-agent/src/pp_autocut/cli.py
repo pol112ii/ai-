@@ -17,6 +17,7 @@ from .analyzer import analyze
 from .detector import build_result
 from .exporter import write_json
 from .models import DetectParams
+from .preview import calibrate, print_calibration, render_preview, write_metrics_csv
 
 MODES = ("cut", "mark", "off")
 
@@ -67,6 +68,13 @@ def main(argv=None) -> int:
     parser.add_argument("--offcenter-mode", choices=MODES, default=None, help="오프센터 처리 (기본 mark)")
     parser.add_argument("--min-offcenter-sec", type=float, default=None)
     parser.add_argument("--center-dist-thresh", type=float, default=None)
+    # 진단/튜닝 도구
+    parser.add_argument("--preview", metavar="OUT.mp4", default=None,
+                        help="검출 결과를 오버레이한 미리보기 영상 생성")
+    parser.add_argument("--metrics-csv", metavar="OUT.csv", default=None,
+                        help="프레임별 지표 CSV 저장")
+    parser.add_argument("--calibrate", action="store_true",
+                        help="모션 분포에서 임계값 추천값 출력")
     parser.add_argument("-q", "--quiet", action="store_true", help="요약 출력 생략")
     args = parser.parse_args(argv)
 
@@ -82,6 +90,13 @@ def main(argv=None) -> int:
     result = build_result(args.input, track, params)
     data = write_json(result, out_path)
 
+    if args.calibrate:
+        print_calibration(calibrate(track, params))
+    if args.metrics_csv:
+        write_metrics_csv(track, result, args.metrics_csv)
+    if args.preview:
+        render_preview(args.input, track, result, args.preview)
+
     if not args.quiet:
         s = data["summary"]
         print(f"[pp_autocut] {args.input}")
@@ -91,6 +106,10 @@ def main(argv=None) -> int:
         reasons = ", ".join(f"{k} {v}" for k, v in s["mark_by_reason"].items()) or "-"
         print(f"  🔖 표시 {s['mark_count']}개 ({reasons})")
         print(f"  -> {out_path}")
+        if args.preview:
+            print(f"  🎬 미리보기 -> {args.preview}")
+        if args.metrics_csv:
+            print(f"  📊 지표 CSV -> {args.metrics_csv}")
     return 0
 
 

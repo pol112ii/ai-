@@ -97,6 +97,35 @@ PYTHONPATH=src python -m pp_autocut input.mp4 --auto-threshold
 
 ---
 
+## 정확도 튜닝 (진단 도구)
+
+검출이 맞는지 '눈으로' 보면서 임계값을 맞추기 위한 도구를 제공한다.
+
+```bash
+# 미리보기 영상 + 지표 CSV + 임계값 추천을 한 번에
+python -m pp_autocut clip.mp4 --auto-threshold \
+    --preview clip_preview.mp4 --metrics-csv clip.csv --calibrate
+```
+
+- `--preview OUT.mp4` : 원본 위에 **안전영역 박스(초록) · 모션 무게중심 점(흰) ·
+  모션 점수 · 검출 라벨([MARK]/[CUT] STATIC/OFF-CENTER/STUTTER, 색 테두리)** 을
+  입힌 미리보기 영상. 어디를 어떻게 잡았는지 한눈에 보인다.
+- `--metrics-csv OUT.csv` : 프레임별 `motion, cx, cy, border_ratio, kind, reason`.
+  엑셀로 그래프 그려 임계값을 정밀 조정할 때 쓴다.
+- `--calibrate` : 클립의 모션 분포(분위수)와 **추천 `static_threshold`**,
+  움직이는 프레임의 무게중심거리/가장자리비율 분포를 출력. 오프센터 임계값
+  (`center_dist_thresh`, `border_ratio_thresh`)을 정할 때 참고한다.
+
+### 튜닝 순서(권장)
+
+1. `--auto-threshold --preview --calibrate` 로 한 번 돌려 미리보기를 본다.
+2. 정지가 덜/과하게 잡히면 → `--static-threshold` 또는 `--min-static-sec` 조정.
+3. 오프센터가 덜/과하게 잡히면 → `--center-dist-thresh`(작을수록 민감),
+   `border_ratio_thresh`, `--min-offcenter-sec` 조정. `--calibrate`의 분위수를 기준으로.
+4. 만족하면 그 값을 `config.json`에 저장해 재사용한다.
+
+---
+
 ## 파라미터
 
 | 이름 | 기본값 | 설명 |
